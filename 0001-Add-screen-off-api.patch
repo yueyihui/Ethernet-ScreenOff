@@ -1,0 +1,135 @@
+From e548d92230af332cfacbb006167dacd114fb73ea Mon Sep 17 00:00:00 2001
+From: "Yue, Liang" <liang.yue@cienet.com.cn>
+Date: Tue, 1 Aug 2017 17:41:30 +0800
+Subject: [PATCH] Add screen off api
+
+---
+/android/hardware/display/DisplayManagerGlobal.java |  7 +++++++
+ .../java/android/hardware/display/IDisplayManager.aidl |  2 ++
+ .../android/server/display/DisplayManagerService.java  | 17 ++++++++++++++++-
+ .../android/server/display/DisplayPowerController.java | 18 +++++++++++++-----
+ 5 files changed, 39 insertions(+), 6 deletions(-)
+
+diff --git a/frameworks/base/core/java/android/hardware/display/DisplayManagerGlobal.java b/frameworks/base/core/java/android/hardware/display/DisplayManagerGlobal.java
+index 2045e8e..44678ae 100755
+--- a/frameworks/base/core/java/android/hardware/display/DisplayManagerGlobal.java
++++ b/frameworks/base/core/java/android/hardware/display/DisplayManagerGlobal.java
+@@ -98,6 +98,13 @@ public final class DisplayManagerGlobal {
+         }
+     }
+ 
++    public void requestScreenOff(boolean screenOff) {
++        try {
++            mDm.requestScreenOff(screenOff);
++        } catch (RemoteException e) {
++        }
++    }
++
+     /**
+      * Get information about a particular logical display.
+      *
+diff --git a/frameworks/base/core/java/android/hardware/display/IDisplayManager.aidl b/frameworks/base/core/java/android/hardware/display/IDisplayManager.aidl
+index f20a968..0cde7cc 100755
+--- a/frameworks/base/core/java/android/hardware/display/IDisplayManager.aidl
++++ b/frameworks/base/core/java/android/hardware/display/IDisplayManager.aidl
+@@ -26,6 +26,8 @@ import android.view.Surface;
+ 
+ /** @hide */
+ interface IDisplayManager {
++    void requestScreenOff(boolean screenOff);
++
+     DisplayInfo getDisplayInfo(int displayId);
+     int[] getDisplayIds();
+ 
+diff --git a/frameworks/base/services/core/java/com/android/server/display/DisplayManagerService.java b/frameworks/base/services/core/java/com/android/server/display/DisplayManagerService.java
+index 24dfb5a..b6cbe88 100755
+--- a/frameworks/base/services/core/java/com/android/server/display/DisplayManagerService.java
++++ b/frameworks/base/services/core/java/com/android/server/display/DisplayManagerService.java
+@@ -17,7 +17,7 @@
+ package com.android.server.display;
+ 
+ import com.android.internal.util.IndentingPrintWriter;
+-
++import android.hardware.display.DisplayManagerInternal.DisplayPowerRequest;
+ import android.Manifest;
+ import android.content.Context;
+ import android.content.pm.PackageManager;
+@@ -1297,6 +1297,21 @@ public final class DisplayManagerService extends SystemService {
+     }
+ 
+     private final class BinderService extends IDisplayManager.Stub {
++
++        @Override
++        public void requestScreenOff (boolean screenOff) {
++            if (screenOff) {
++                mDisplayPowerController.mSkip = true;
++                mDisplayPowerController.animateScreenBrightness(0, DisplayPowerController.BRIGHTNESS_RAMP_RATE_FAST);
++            } else {
++                mDisplayPowerController.mSkip = false;
++                int brightness = mDisplayPowerController
++                        .clampScreenBrightness(mDisplayPowerController.getCurrentlyRequestedPowerState().screenBrightness);
++                Slog.d(TAG, "requestPowerState: clampScreenBrightness = " + brightness);
++                mDisplayPowerController.animateScreenBrightness(brightness, DisplayPowerController.BRIGHTNESS_RAMP_RATE_FAST);
++            }
++        }
++
+         /**
+          * Returns information about the specified logical display.
+          *
+diff --git a/frameworks/base/services/core/java/com/android/server/display/DisplayPowerController.java b/frameworks/base/services/core/java/com/android/server/display/DisplayPowerController.java
+index 7b49530..b1fce5c 100644
+--- a/frameworks/base/services/core/java/com/android/server/display/DisplayPowerController.java
++++ b/frameworks/base/services/core/java/com/android/server/display/DisplayPowerController.java
+@@ -103,8 +103,8 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
+     private static final float TYPICAL_PROXIMITY_THRESHOLD = 5.0f;
+ 
+     // Brightness animation ramp rate in brightness units per second.
+-    private static final int BRIGHTNESS_RAMP_RATE_FAST = 200;
+-    private static final int BRIGHTNESS_RAMP_RATE_SLOW = 40;
++    public static final int BRIGHTNESS_RAMP_RATE_FAST = 200;
++    public static final int BRIGHTNESS_RAMP_RATE_SLOW = 40;
+ 
+     private static final int REPORTED_TO_POLICY_SCREEN_OFF = 0;
+     private static final int REPORTED_TO_POLICY_SCREEN_TURNING_ON = 1;
+@@ -229,6 +229,8 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
+     // turning off the screen.
+     private boolean mPendingScreenOff;
+ 
++    public boolean mSkip;
++
+     // True if we have unfinished business and are holding a suspend blocker.
+     private boolean mUnfinishedBusiness;
+ 
+@@ -488,7 +490,9 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
+     private final RampAnimator.Listener mRampAnimatorListener = new RampAnimator.Listener() {
+         @Override
+         public void onAnimationEnd() {
+-            sendUpdatePowerState();
++            if (!mSkip) {
++                sendUpdatePowerState();
++            }
+         }
+     };
+ 
+@@ -806,12 +810,16 @@ final class DisplayPowerController implements AutomaticBrightnessController.Call
+         return mPendingScreenOnUnblocker == null;
+     }
+ 
+-    private int clampScreenBrightness(int value) {
++    public int clampScreenBrightness(int value) {
+         return MathUtils.constrain(
+                 value, mScreenBrightnessRangeMinimum, mScreenBrightnessRangeMaximum);
+     }
+ 
+-    private void animateScreenBrightness(int target, int rate) {
++    public DisplayPowerRequest getCurrentlyRequestedPowerState() {
++        return mPowerRequest;
++    }
++
++    public void animateScreenBrightness(int target, int rate) {
+         if (DEBUG) {
+             Slog.d(TAG, "Animating brightness: target=" + target +", rate=" + rate);
+         }
+-- 
+1.9.1
+

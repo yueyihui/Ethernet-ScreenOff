@@ -1,0 +1,73 @@
+From c635de7688368c3eba028916ffbd483540845d8f Mon Sep 17 00:00:00 2001
+From: "Yue, Liang" <liang.yue@cienet.com.cn>
+Date: Mon, 19 Mar 2018 10:53:17 +0800
+Subject: [PATCH] disp lcd backlight toggle
+
+---
+ linux-3.10/drivers/video/sunxi/disp2/disp/de/disp_lcd.c |  6 ++++++
+ linux-3.10/drivers/video/sunxi/disp2/disp/dev_disp.c    | 12 ++++++++++++
+ 2 files changed, 18 insertions(+)
+
+diff --git a/linux-3.10/drivers/video/sunxi/disp2/disp/de/disp_lcd.c b/linux-3.10/drivers/video/sunxi/disp2/disp/de/disp_lcd.c
+index d00a875..24a404f 100755
+--- a/linux-3.10/drivers/video/sunxi/disp2/disp/de/disp_lcd.c
++++ b/linux-3.10/drivers/video/sunxi/disp2/disp/de/disp_lcd.c
+@@ -1136,6 +1136,7 @@ static s32 disp_lcd_backlight_enable(struct disp_device *lcd)
+ 
+ 	if (disp_lcd_is_used(lcd)) {
+ 		unsigned bl;
++        printk("disp_lcd_backlight_enable %d\n", lcdp->lcd_cfg.lcd_bl_en_used);
+ 		if (lcdp->lcd_cfg.lcd_bl_en_used) {
+ 			//io-pad
+ 			if (!((!strcmp(lcdp->lcd_cfg.lcd_bl_en_power, "")) || (!strcmp(lcdp->lcd_cfg.lcd_bl_en_power, "none"))))
+@@ -1144,6 +1145,7 @@ static s32 disp_lcd_backlight_enable(struct disp_device *lcd)
+ 			memcpy(gpio_info, &(lcdp->lcd_cfg.lcd_bl_en), sizeof(disp_gpio_set_t));
+ 			gpio_free(lcdp->lcd_cfg.lcd_bl_en.gpio);
+ 			lcdp->lcd_cfg.lcd_bl_gpio_hdl = disp_sys_gpio_request(gpio_info, 1);
++
+ 			//pr_info("XXXXXXXXXXXXXXXXXXXXXX 000 %s\n", lcdp->lcd_cfg.lcd_bl_en.gpio_name);
+ 		}
+ 		bl = disp_lcd_get_bright(lcd);
+@@ -1173,12 +1175,16 @@ static s32 disp_lcd_backlight_disable(struct disp_device *lcd)
+ 	spin_unlock_irqrestore(&lcd_data_lock, flags);
+ 
+ 	if (disp_lcd_is_used(lcd)) {
++        printk("disp_lcd_backlight_disable %d\n", lcdp->lcd_cfg.lcd_bl_en_used);
+ 		if (lcdp->lcd_cfg.lcd_bl_en_used) {
+ 			disp_sys_gpio_release(lcdp->lcd_cfg.lcd_bl_gpio_hdl, 2);
+ 
+ 			//io-pad
+ 			if (!((!strcmp(lcdp->lcd_cfg.lcd_bl_en_power, "")) || (!strcmp(lcdp->lcd_cfg.lcd_bl_en_power, "none"))))
+ 				disp_sys_power_disable(lcdp->lcd_cfg.lcd_bl_en_power);
++
++            lcdp->lcd_cfg.lcd_bl_gpio_hdl = disp_sys_gpio_request(&lcdp->lcd_cfg.lcd_bl_en, 1);
++            disp_sys_gpio_set_value(lcdp->lcd_cfg.lcd_bl_gpio_hdl, 0, "lcd_bl_en");
+ 		}
+ 	}
+ 
+diff --git a/linux-3.10/drivers/video/sunxi/disp2/disp/dev_disp.c b/linux-3.10/drivers/video/sunxi/disp2/disp/dev_disp.c
+index 05353b9..c276c7a 100755
+--- a/linux-3.10/drivers/video/sunxi/disp2/disp/dev_disp.c
++++ b/linux-3.10/drivers/video/sunxi/disp2/disp/dev_disp.c
+@@ -1836,6 +1836,18 @@ long disp_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+ 		break;
+ 	}
+ 
++	case DISP_LCD_BACKLIGHT_ENABLE:
++	{
++		dispdev->backlight_enable(dispdev);
++		break;
++	}
++
++	case DISP_LCD_BACKLIGHT_DISABLE:
++	{
++		dispdev->backlight_disable(dispdev);
++		break;
++	}
++
+ 	case DISP_BLANK:
+ 	{
+ 		/* only response main device' blank request */
+-- 
+1.9.1
+

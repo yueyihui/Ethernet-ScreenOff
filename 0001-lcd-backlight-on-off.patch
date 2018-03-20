@@ -1,0 +1,187 @@
+From 193abce65442d3bd4d98e7a323d97c7bbfd2e20d Mon Sep 17 00:00:00 2001
+From: "Yue, Liang" <liang.yue@cienet.com.cn>
+Date: Tue, 20 Mar 2018 15:05:55 +0800
+Subject: [PATCH] lcd backlight on/off
+
+---
+ .../server/display/DisplayManagerService.java      |  8 ++++++++
+ .../core/java/com/android/server/lights/Light.java |  2 ++
+ .../com/android/server/lights/LightsService.java   | 14 +++++++++++++
+ .../com_android_server_lights_LightsService.cpp    | 24 ++++++++++++++++++++++
+ hardware/aw/lights/tulip/lights.c                  | 22 ++++++++++++++++++++
+ hardware/libhardware/include/hardware/lights.h     |  5 +++++
+ 6 files changed, 75 insertions(+)
+
+diff --git a/frameworks/base/services/core/java/com/android/server/display/DisplayManagerService.java b/frameworks/base/services/core/java/com/android/server/display/DisplayManagerService.java
+index b6cbe88..ae2bf63 100755
+--- a/frameworks/base/services/core/java/com/android/server/display/DisplayManagerService.java
++++ b/frameworks/base/services/core/java/com/android/server/display/DisplayManagerService.java
+@@ -59,6 +59,8 @@ import com.android.server.DisplayThread;
+ import com.android.server.LocalServices;
+ import com.android.server.SystemService;
+ import com.android.server.UiThread;
++import com.android.server.lights.Light;
++import com.android.server.lights.LightsManager;
+ 
+ /* add by allwinner */
+ import android.content.ContentResolver;
+@@ -1303,12 +1305,18 @@ public final class DisplayManagerService extends SystemService {
+             if (screenOff) {
+                 mDisplayPowerController.mSkip = true;
+                 mDisplayPowerController.animateScreenBrightness(0, DisplayPowerController.BRIGHTNESS_RAMP_RATE_FAST);
++                LightsManager lights = LocalServices.getService(LightsManager.class);
++                Light backlight = lights.getLight(LightsManager.LIGHT_ID_BACKLIGHT);
++                backlight.backlightOff();
+             } else {
+                 mDisplayPowerController.mSkip = false;
+                 int brightness = mDisplayPowerController
+                         .clampScreenBrightness(mDisplayPowerController.getCurrentlyRequestedPowerState().screenBrightness);
+                 Slog.d(TAG, "requestPowerState: clampScreenBrightness = " + brightness);
+                 mDisplayPowerController.animateScreenBrightness(brightness, DisplayPowerController.BRIGHTNESS_RAMP_RATE_FAST);
++                LightsManager lights = LocalServices.getService(LightsManager.class);
++                Light backlight = lights.getLight(LightsManager.LIGHT_ID_BACKLIGHT);
++                backlight.backlightOn();
+             }
+         }
+ 
+diff --git a/frameworks/base/services/core/java/com/android/server/lights/Light.java b/frameworks/base/services/core/java/com/android/server/lights/Light.java
+index b496b4c..d0a595e 100644
+--- a/frameworks/base/services/core/java/com/android/server/lights/Light.java
++++ b/frameworks/base/services/core/java/com/android/server/lights/Light.java
+@@ -38,4 +38,6 @@ public abstract class Light {
+     public abstract void pulse();
+     public abstract void pulse(int color, int onMS);
+     public abstract void turnOff();
++    public abstract void backlightOn();
++    public abstract void backlightOff();
+ }
+\ No newline at end of file
+diff --git a/frameworks/base/services/core/java/com/android/server/lights/LightsService.java b/frameworks/base/services/core/java/com/android/server/lights/LightsService.java
+index ed884ef..eb3b965 100644
+--- a/frameworks/base/services/core/java/com/android/server/lights/LightsService.java
++++ b/frameworks/base/services/core/java/com/android/server/lights/LightsService.java
+@@ -87,6 +87,16 @@ public class LightsService extends SystemService {
+             }
+         }
+ 
++        @Override
++        public void backlightOn() {
++            backLightOn_native(mNativePointer, mId);
++        }
++
++        @Override
++        public void backlightOff() {
++            backLightOff_native(mNativePointer, mId);
++        }
++
+         private void stopFlashing() {
+             synchronized (this) {
+                 setLightLocked(mColor, LIGHT_FLASH_NONE, 0, 0, BRIGHTNESS_MODE_USER);
+@@ -165,5 +175,9 @@ public class LightsService extends SystemService {
+     static native void setLight_native(long ptr, int light, int color, int mode,
+             int onMS, int offMS, int brightnessMode);
+ 
++    static native void backLightOn_native(long ptr, int lightId);
++
++    static native void backLightOff_native(long ptr, int lightId);
++
+     private long mNativePointer;
+ }
+diff --git a/frameworks/base/services/core/jni/com_android_server_lights_LightsService.cpp b/frameworks/base/services/core/jni/com_android_server_lights_LightsService.cpp
+index b2b2783..743364c 100644
+--- a/frameworks/base/services/core/jni/com_android_server_lights_LightsService.cpp
++++ b/frameworks/base/services/core/jni/com_android_server_lights_LightsService.cpp
+@@ -126,10 +126,34 @@ static void setLight_native(JNIEnv* /* env */, jobject /* clazz */, jlong ptr,
+     }
+ }
+ 
++static void backLightOn_native(JNIEnv* /* env */, jobject /* clazz */, jlong ptr,
++        jint light_id)
++{
++    Devices* devices = (Devices*)ptr;
++
++    if (light_id < 0 || light_id >= LIGHT_COUNT || devices->lights[light_id] == NULL) {
++        return ;
++    }
++	devices->lights[light_id]->bkl_off(devices->lights[light_id], 1);
++}
++
++static void backLightOff_native(JNIEnv* /* env */, jobject /* clazz */, jlong ptr,
++        jint light_id)
++{
++    Devices* devices = (Devices*)ptr;
++
++    if (light_id < 0 || light_id >= LIGHT_COUNT || devices->lights[light_id] == NULL) {
++        return ;
++    }
++	devices->lights[light_id]->bkl_off(devices->lights[light_id], 0);
++}
++
+ static JNINativeMethod method_table[] = {
+     { "init_native", "()J", (void*)init_native },
+     { "finalize_native", "(J)V", (void*)finalize_native },
+     { "setLight_native", "(JIIIIII)V", (void*)setLight_native },
++    { "backLightOn_native", "(JI)V", (void*)backLightOn_native },
++    { "backLightOff_native", "(JI)V", (void*)backLightOff_native },
+ };
+ 
+ int register_android_server_LightsService(JNIEnv *env)
+diff --git a/hardware/aw/lights/tulip/lights.c b/hardware/aw/lights/tulip/lights.c
+index 6801ad5..1a36b2b 100755
+--- a/hardware/aw/lights/tulip/lights.c
++++ b/hardware/aw/lights/tulip/lights.c
+@@ -65,6 +65,27 @@ static int set_light_backlight(struct light_device_t *dev,
+     return err;
+ }
+ 
++static int toggle_backlight(struct light_device_t *dev, int on)
++{
++	int err = 0;
++	pthread_mutex_lock(&g_lock);
++
++	unsigned long args[3];
++
++	args[0] = 0;
++	args[2] = 0;
++
++	if (on > 0) {
++		args[1] = 1;
++		err = ioctl(fd, DISP_CMD_LCD_BACKLIGHT_ENABLE, args);
++	} else {
++		args[1] = 0;
++		err = ioctl(fd, DISP_CMD_LCD_BACKLIGHT_DISABLE, args);
++	}
++	pthread_mutex_unlock(&g_lock);
++	return err;
++}
++
+ /** Close the lights device */
+ static int close_lights(struct light_device_t *dev)
+ {
+@@ -103,6 +124,7 @@ static int open_lights(const struct hw_module_t *module, char const *name,
+ 	dev->common.module = (struct hw_module_t *)module;
+ 	dev->common.close = (int (*)(struct hw_device_t *))close_lights;
+ 	dev->set_light = set_light;
++	dev->bkl_off = toggle_backlight;
+ 
+ 	*device = (struct hw_device_t *)dev;
+ 
+diff --git a/hardware/libhardware/include/hardware/lights.h b/hardware/libhardware/include/hardware/lights.h
+index 2cf5519..f5e4df4 100644
+--- a/hardware/libhardware/include/hardware/lights.h
++++ b/hardware/libhardware/include/hardware/lights.h
+@@ -128,6 +128,11 @@ struct light_device_t {
+      */
+     int (*set_light)(struct light_device_t* dev,
+             struct light_state_t const* state);
++
++	/**
++	 * lcd back light controll
++	 */
++	int (*bkl_off)(struct light_device_t* dev, int on);
+ };
+ 
+ 
+-- 
+1.9.1
+
